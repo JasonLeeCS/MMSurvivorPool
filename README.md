@@ -61,6 +61,51 @@ The frontend defaults to the shared-name dropdown pick flow first. Users do not 
         `-- types
 ```
 
+## Run The App
+
+### Local Development
+
+1. Open a terminal in the repo root.
+2. Move into the frontend app:
+
+```bash
+cd frontend
+```
+
+3. Install dependencies:
+
+```bash
+npm install
+```
+
+4. Create `.env` from `.env.example`.
+5. Keep `VITE_USE_MOCK_API=true` if you want to run the app without deploying Apps Script yet.
+6. Start the dev server:
+
+```bash
+npm run dev
+```
+
+7. Open the local URL printed by Vite, usually `http://localhost:5173`.
+
+### Production Build Preview
+
+To test the GitHub Pages build locally:
+
+```bash
+cd frontend
+npm run build
+npm run preview
+```
+
+### Run Against Google Apps Script
+
+After deploying the Apps Script web app:
+
+1. Set `VITE_USE_MOCK_API=false` in `frontend/.env`.
+2. Set `VITE_APPS_SCRIPT_BASE_URL` to your deployed Apps Script web app URL.
+3. Restart the Vite dev server with `npm run dev`.
+
 ## Frontend Setup
 
 1. Install dependencies:
