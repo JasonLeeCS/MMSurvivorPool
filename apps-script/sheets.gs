@@ -125,3 +125,43 @@ function parseBool_(value) {
 function sanitizeText_(value) {
   return String(value || '').trim();
 }
+
+function normalizeSheetDate_(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, 'UTC', 'yyyy-MM-dd');
+  }
+
+  var text = sanitizeText_(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+
+  var parsed = new Date(text);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, 'UTC', 'yyyy-MM-dd');
+  }
+
+  return text;
+}
+
+function derivePoolDateFromTipoff_(tipoffTime, timezone, fallbackDate) {
+  var tipoff = sanitizeText_(tipoffTime);
+  if (!tipoff) {
+    return fallbackDate || '';
+  }
+
+  if (/T00:00:00(?:\.000)?Z$/.test(tipoff)) {
+    return fallbackDate || '';
+  }
+
+  var parsed = new Date(tipoff);
+  if (isNaN(parsed.getTime())) {
+    return fallbackDate || '';
+  }
+
+  return Utilities.formatDate(parsed, timezone || 'America/Chicago', 'yyyy-MM-dd');
+}

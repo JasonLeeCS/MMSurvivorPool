@@ -18,20 +18,9 @@ function getSyncProvider_() {
         return { status: 'warning', message: 'Sync disabled in Settings.' };
       }
 
-      var timezone = settingsMap.timezone || 'America/Chicago';
-      var targetDate = Utilities.formatDate(new Date(), timezone, 'yyyy/MM/dd');
-      var baseUrl = settingsMap.ncaa_scoreboard_base_url || 'https://data.ncaa.com/casablanca/scoreboard/basketball-men/d1';
-      var url = baseUrl + '/' + targetDate + '/scoreboard.json';
-
       try {
-        var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-        if (response.getResponseCode() !== 200) {
-          return { status: 'warning', message: 'NCAA feed unavailable. Using last known sheet data.' };
-        }
-
-        var payload = JSON.parse(response.getContentText());
-        applyScoreboardPayload_(payload);
-        return { status: 'ok', message: 'NCAA sync completed successfully.' };
+        var result = syncNcaaScoresPages_();
+        return { status: 'ok', message: result.message };
       } catch (error) {
         return { status: 'error', message: 'NCAA sync failed. Using last known sheet data. ' + error.message };
       }
@@ -39,11 +28,209 @@ function getSyncProvider_() {
   };
 }
 
-function applyScoreboardPayload_(payload) {
-  if (!payload || !payload.games) {
-    throw new Error('Invalid NCAA scoreboard payload.');
+function syncNcaaScoresPages_() {
+  var settingsMap = getSettingsMap_();
+  var seasonYear = Number(settingsMap.season_year || new Date().getFullYear());
+  var start = new Date(Date.UTC(seasonYear, 2, 17, 0, 0, 0));
+  var end = new Date(Date.UTC(seasonYear, 3, 7, 0, 0, 0));
+  var today = new Date();
+  var latest = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0));
+  var cursor = new Date(start.getTime());
+  var allGames = [];
+
+  if (latest.getTime() < start.getTime()) {
+    latest = start;
+  }
+  if (latest.getTime() > end.getTime()) {
+    latest = end;
   }
 
+  while (cursor.getTime() <= latest.getTime()) {
+    allGames = allGames.concat(fetchNcaaGamesForDate_(cursor));
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  if (!allGames.length) {
+    throw new Error('No games found on NCAA scores pages.');
+  }
+
+  upsertGamesAndTeamsFromParsedGames_(allGames);
+  return { message: 'NCAA sync completed successfully. Imported ' + allGames.length + ' game entries.' };
+}
+
+function fetchNcaaGamesForDate_(dateValue) {
+  var year = Utilities.formatDate(dateValue, 'UTC', 'yyyy');
+  var month = Utilities.formatDate(dateValue, 'UTC', 'MM');
+  var day = Utilities.formatDate(dateValue, 'UTC', 'dd');
+  var dateKey = Utilities.formatDate(dateValue, 'UTC', 'yyyy-MM-dd');
+  var url = 'https://www.ncaa.com/march-madness-live/scores/' + year + '/' + month + '/' + day;
+  var response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    followRedirects: true,
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'text/html,application/xhtml+xml',
+    },
+  });
+
+  if (response.getResponseCode() !== 200) {
+    return [];
+  }
+
+  return parseNcaaGamesFromHtml_(response.getContentText(), dateKey);
+}
+
+function parseNcaaGamesFromHtml_(html, dateKey) {
+  var text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&reg;/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  var chunks = text.match(/((?:Watch Live.*?|\d{1,2}:\d{2}\s(?:AM|PM)\sUTC.*?|FINAL.*?|Final.*?)(?:Second Round|Sweet 16|Elite Eight|Final Four|National Championship)(?:\s*-\s*[A-Z ]+)?)(?=(?:Watch Live|\d{1,2}:\d{2}\s(?:AM|PM)\sUTC|FINAL|Final|NCAA March Madness on|$))/g) || [];
+  var games = [];
+
+  chunks.forEach(function(chunk, index) {
+    var parsed = parseNcaaGameChunk_(chunk, dateKey, index);
+    if (parsed) {
+      games.push(parsed);
+    }
+  });
+
+  return games;
+}
+
+function parseNcaaGameChunk_(chunk, dateKey, index) {
+  var clean = chunk.replace(/\s+/g, ' ').trim();
+  var roundMatch = clean.match(/(Second Round|Sweet 16|Elite Eight|Final Four|National Championship)(?:\s*-\s*([A-Z ]+))?$/);
+  if (!roundMatch) {
+    return null;
+  }
+
+  var round = roundMatch[1] + (roundMatch[2] ? ' - ' + roundMatch[2].trim() : '');
+  var prefix = clean.slice(0, roundMatch.index).trim();
+
+  var scheduledMatch = prefix.match(/^(.*?UTC)\s+(\d{1,2})\s+(.+?)\s+\((\d{1,2}-\d{1,2})\)\s+(\d{1,2})\s+(.+?)\s+\((\d{1,2}-\d{1,2})\)$/);
+  if (scheduledMatch) {
+    if (!isLikelyTeamName_(scheduledMatch[3]) || !isLikelyTeamName_(scheduledMatch[6])) {
+      return null;
+    }
+
+    return {
+      gameId: 'g_' + dateKey.replace(/-/g, '') + '_' + index,
+      date: dateKey,
+      tipoffTime: buildUtcIsoFromLabel_(dateKey, scheduledMatch[1]),
+      team1Seed: scheduledMatch[2],
+      team1: scheduledMatch[3].trim(),
+      team1Score: '',
+      team2Seed: scheduledMatch[5],
+      team2: scheduledMatch[6].trim(),
+      team2Score: '',
+      winner: '',
+      status: 'scheduled',
+      round: round,
+    };
+  }
+
+  var liveMatch = prefix.match(/^(.*?)\s+(\d{1,2})\s+(.+?)\s+(\d{1,3})\s+(\d{1,2})\s+(.+?)\s+(\d{1,3})$/);
+  if (liveMatch) {
+    var label = liveMatch[1].trim();
+    var team1Name = liveMatch[3].trim();
+    var team2Name = liveMatch[6].trim();
+    if (!isLikelyTeamName_(team1Name) || !isLikelyTeamName_(team2Name)) {
+      return null;
+    }
+
+    var team1Score = Number(liveMatch[4]);
+    var team2Score = Number(liveMatch[7]);
+    var isFinal = /^final/i.test(label);
+
+    return {
+      gameId: 'g_' + dateKey.replace(/-/g, '') + '_' + index,
+      date: dateKey,
+      tipoffTime: dateKey + 'T00:00:00Z',
+      team1Seed: liveMatch[2],
+      team1: team1Name,
+      team1Score: team1Score,
+      team2Seed: liveMatch[5],
+      team2: team2Name,
+      team2Score: team2Score,
+      winner: isFinal ? (team1Score >= team2Score ? team1Name : team2Name) : '',
+      status: isFinal ? 'final' : 'live',
+      round: round,
+    };
+  }
+
+  return null;
+}
+
+function buildUtcIsoFromLabel_(dateKey, label) {
+  var match = label.match(/(\d{1,2}):(\d{2})\s(AM|PM)\sUTC/);
+  if (!match) {
+    return dateKey + 'T00:00:00Z';
+  }
+
+  var hours = Number(match[1]) % 12;
+  if (match[3] === 'PM') {
+    hours += 12;
+  }
+
+  var minutes = Number(match[2]);
+  return new Date(Date.UTC(
+    Number(dateKey.slice(0, 4)),
+    Number(dateKey.slice(5, 7)) - 1,
+    Number(dateKey.slice(8, 10)),
+    hours,
+    minutes,
+    0,
+  )).toISOString();
+}
+
+function slugifyTeamId_(teamName) {
+  return sanitizeText_(teamName)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isLikelyTeamName_(value) {
+  var text = sanitizeText_(value);
+  if (!text) {
+    return false;
+  }
+
+  if (text.length > 40) {
+    return false;
+  }
+
+  if (/(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Tomorrow|Yesterday)/i.test(text)) {
+    return false;
+  }
+
+  if (/\bGames?\b/i.test(text)) {
+    return false;
+  }
+
+  if (/\bUTC\b/i.test(text)) {
+    return false;
+  }
+
+  if (/\d{1,2}:\d{2}/.test(text)) {
+    return false;
+  }
+
+  return true;
+}
+
+function upsertGamesAndTeamsFromParsedGames_(games) {
+  var timezone = getSettingsMap_().timezone || 'America/Chicago';
   var existingTeams = getRows_(TAB_NAMES.TEAMS);
   var teamMap = {};
 
@@ -51,41 +238,35 @@ function applyScoreboardPayload_(payload) {
     teamMap[String(team.team_id)] = team;
   });
 
-  payload.games.forEach(function(game) {
-    var home = game.home || {};
-    var away = game.away || {};
-    var gameId = sanitizeText_(game.gameID || game.game && game.game.id || Utilities.getUuid());
-    var gameDate = sanitizeText_(game.game && game.game.gameDate || payload.date || '');
-    var tipoff = sanitizeText_(game.startTimeEpoch ? new Date(Number(game.startTimeEpoch) * 1000).toISOString() : game.startTime || '');
-    var winnerName = '';
-    if (sanitizeText_(game.gameState) === 'final') {
-      winnerName = Number(home.score) > Number(away.score) ? sanitizeText_(home.names && home.names.short || home.name) : sanitizeText_(away.names && away.names.short || away.name);
-    }
-
+  games.forEach(function(game) {
+    var poolDate = derivePoolDateFromTipoff_(game.tipoffTime, timezone, game.date);
     upsertRow_(TAB_NAMES.GAMES, 'game_id', {
-      game_id: gameId,
-      date: gameDate ? gameDate.slice(0, 10) : '',
-      tipoff_time: tipoff,
-      team1: sanitizeText_(home.names && home.names.short || home.name),
-      team2: sanitizeText_(away.names && away.names.short || away.name),
-      winner: winnerName,
-      round: sanitizeText_(game.round || game.bracketRound || ''),
-      status: sanitizeText_(game.gameState || game.status || 'scheduled').toLowerCase(),
+      game_id: game.gameId,
+      date: poolDate,
+      tipoff_time: game.tipoffTime,
+      team1: game.team1,
+      team1_score: game.team1Score,
+      team2: game.team2,
+      team2_score: game.team2Score,
+      winner: game.winner,
+      round: game.round,
+      status: game.status,
     });
 
-    [home, away].forEach(function(side) {
-      var teamId = sanitizeText_(side.ncaaOrgId || side.id || side.shortName || side.name).toLowerCase().replace(/\s+/g, '-');
-      var teamName = sanitizeText_(side.names && side.names.short || side.shortName || side.name);
-      if (!teamId || !teamName) {
+    [
+      { teamId: slugifyTeamId_(game.team1), teamName: game.team1, seed: game.team1Seed },
+      { teamId: slugifyTeamId_(game.team2), teamName: game.team2, seed: game.team2Seed },
+    ].forEach(function(side) {
+      if (!side.teamId || !side.teamName) {
         return;
       }
 
-      var existing = teamMap[teamId] || {};
+      var existing = teamMap[side.teamId] || {};
       upsertRow_(TAB_NAMES.TEAMS, 'team_id', {
-        team_id: teamId,
-        team_name: teamName,
+        team_id: side.teamId,
+        team_name: side.teamName,
         seed: sanitizeText_(side.seed),
-        region: sanitizeText_(side.region || existing.region || ''),
+        region: sanitizeText_(existing.region || ''),
         alive: existing.manual_override ? existing.alive : true,
         source_updated_at: isoNow_(),
         manual_override: existing.manual_override || false,

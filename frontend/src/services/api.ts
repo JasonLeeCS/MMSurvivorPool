@@ -22,6 +22,17 @@ import type {
 } from '../types/domain';
 
 const ADMIN_SESSION_KEY = 'mmsp_admin_session';
+const jsonpWindow = window as unknown as Record<string, unknown>;
+
+function buildQuery(params: Record<string, string | number | boolean | undefined>) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  return search.toString();
+}
 
 function getMockEligibleTeams(userId: string): EligibleTeamResponse {
   const snapshot = getMockSnapshot();
@@ -34,36 +45,59 @@ function getMockEligibleTeams(userId: string): EligibleTeamResponse {
   };
 }
 
-async function request<T>(method: 'GET' | 'POST', action: string, body?: object, admin = false): Promise<T> {
+async function jsonpRequest<T>(
+  action: string,
+  params?: Record<string, string | number | boolean | undefined>,
+  admin = false,
+  timeoutMs = 20000,
+): Promise<T> {
   if (!config.appsScriptBaseUrl) {
     throw new Error('Missing Apps Script base URL.');
   }
 
-  const url = method === 'GET' ? `${config.appsScriptBaseUrl}?action=${encodeURIComponent(action)}` : config.appsScriptBaseUrl;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (admin) {
-    const session = getAdminSession();
-    if (!session) {
-      throw new Error('Admin session expired.');
+  return new Promise<T>((resolve, reject) => {
+    const callbackName = `mmsp_jsonp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const session = admin ? getAdminSession() : null;
+    if (admin && !session) {
+      reject(new Error('Admin session expired.'));
+      return;
     }
-    headers['X-Admin-Token'] = session.token;
-  }
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: method === 'POST' ? JSON.stringify({ action, ...(body ? (body as object) : {}), adminToken: admin ? getAdminSession()?.token : undefined }) : undefined,
+    const query = buildQuery({
+      action,
+      callback: callbackName,
+      ...(params || {}),
+      adminToken: session?.token,
+    });
+    const script = document.createElement('script');
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Apps Script request timed out.'));
+    }, timeoutMs);
+
+    function cleanup() {
+      window.clearTimeout(timeoutId);
+      delete jsonpWindow[callbackName];
+      script.remove();
+    }
+
+    jsonpWindow[callbackName] = (payload: { ok: boolean; data?: T; error?: string }) => {
+      cleanup();
+      if (!payload.ok) {
+        reject(new Error(payload.error || 'Unknown API error'));
+        return;
+      }
+      resolve(payload.data as T);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('Failed to reach Apps Script. Check deployment access and URL.'));
+    };
+
+    script.src = `${config.appsScriptBaseUrl}?${query}`;
+    document.body.appendChild(script);
   });
-
-  const payload = await response.json();
-  if (!payload.ok) {
-    throw new Error(payload.error || 'Unknown API error');
-  }
-
-  return payload.data as T;
 }
 
 export function getAdminSession() {
@@ -87,21 +121,21 @@ export async function fetchSnapshot(): Promise<AppSnapshot> {
   if (config.useMockApi) {
     return Promise.resolve(getMockSnapshot());
   }
-  return request<AppSnapshot>('GET', 'snapshot');
+  return jsonpRequest<AppSnapshot>('snapshot');
 }
 
 export async function fetchEligibleTeams(userId: string): Promise<EligibleTeamResponse> {
   if (config.useMockApi) {
     return Promise.resolve(getMockEligibleTeams(userId));
   }
-  return request<EligibleTeamResponse>('POST', 'eligibleTeams', { userId });
+  return jsonpRequest<EligibleTeamResponse>('eligibleTeams', { userId });
 }
 
 export async function submitPick(payload: SubmitPickPayload): Promise<Pick> {
   if (config.useMockApi) {
     return Promise.resolve(saveMockPick(payload.userId, payload.teamId));
   }
-  return request<Pick>('POST', 'submitPick', payload);
+  return jsonpRequest<Pick>('submitPick', payload as unknown as Record<string, string | number | boolean | undefined>);
 }
 
 export async function validateAdminPasscode(passcode: string): Promise<AdminSession> {
@@ -114,7 +148,7 @@ export async function validateAdminPasscode(passcode: string): Promise<AdminSess
     return session;
   }
 
-  const session = await request<AdminSession>('POST', 'validateAdminPasscode', { passcode });
+  const session = await jsonpRequest<AdminSession>('validateAdminPasscode', { passcode });
   sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
   return session;
 }
@@ -132,33 +166,33 @@ export async function upsertUser(input: AdminUserInput): Promise<User> {
       }),
     );
   }
-  return request<User>('POST', 'upsertUser', input, true);
+  return jsonpRequest<User>('upsertUser', input as unknown as Record<string, string | number | boolean | undefined>, true);
 }
 
 export async function overridePick(input: AdminPickOverrideInput): Promise<Pick> {
   if (config.useMockApi) {
     return Promise.resolve(saveMockPick(input.userId, input.teamId));
   }
-  return request<Pick>('POST', 'adminOverridePick', input, true);
+  return jsonpRequest<Pick>('adminOverridePick', input as unknown as Record<string, string | number | boolean | undefined>, true);
 }
 
 export async function updateTeam(input: TeamUpdateInput): Promise<Team> {
   if (config.useMockApi) {
     return Promise.resolve(updateMockTeam(input.teamId, input.alive, input.manualOverride));
   }
-  return request<Team>('POST', 'updateTeamStatus', input, true);
+  return jsonpRequest<Team>('updateTeamStatus', input as unknown as Record<string, string | number | boolean | undefined>, true);
 }
 
 export async function recordBuyback(userId: string, countChange: number, reason: string): Promise<Buyback> {
   if (config.useMockApi) {
     return Promise.resolve(updateMockBuyback(userId, countChange, reason));
   }
-  return request<Buyback>('POST', 'recordBuyback', { userId, countChange, reason }, true);
+  return jsonpRequest<Buyback>('recordBuyback', { userId, countChange, reason }, true);
 }
 
 export async function refreshTeams(): Promise<{ message: string }> {
   if (config.useMockApi) {
     return Promise.resolve({ message: 'Mock sync completed. Seed data remains active.' });
   }
-  return request<{ message: string }>('POST', 'refreshTeams', {}, true);
+  return jsonpRequest<{ message: string }>('refreshTeams', {}, true, 90000);
 }

@@ -40,8 +40,8 @@ const teams: Team[] = [
 
 const games: Game[] = [
   { gameId: 'g1', date: todayIso, tipoffTime: new Date(now.getTime() + 60 * 60 * 1000).toISOString(), team1: 'Duke', team2: 'UCLA', round: 'Sweet 16', status: 'scheduled' },
-  { gameId: 'g2', date: todayIso, tipoffTime: new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(), team1: 'Houston', team2: 'Tennessee', round: 'Sweet 16', status: 'scheduled' },
-  { gameId: 'g3', date: '2026-03-20', tipoffTime: '2026-03-20T17:15:00Z', team1: 'Kansas', team2: 'Houston', winner: 'Houston', round: 'Round of 32', status: 'final' },
+  { gameId: 'g2', date: todayIso, tipoffTime: new Date(now.getTime() - 20 * 60 * 1000).toISOString(), team1: 'Houston', team2: 'Tennessee', team1Score: 58, team2Score: 52, round: 'Sweet 16', status: 'live' },
+  { gameId: 'g3', date: todayIso, tipoffTime: new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString(), team1: 'Kansas', team2: 'Gonzaga', team1Score: 71, team2Score: 80, winner: 'Gonzaga', round: 'Round of 32', status: 'final' },
 ];
 
 let picks: Pick[] = [

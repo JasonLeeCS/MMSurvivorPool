@@ -104,7 +104,7 @@ export function SubmitPage() {
               <option value="">Select a team</option>
               {eligibility?.eligibleTeams.map((team) => (
                 <option key={team.teamId} value={team.teamId}>
-                  {team.teamName} ({team.seed}, {team.region})
+                  {team.teamName} ({team.seed}{team.region ? `, ${team.region}` : ''})
                 </option>
               ))}
             </select>

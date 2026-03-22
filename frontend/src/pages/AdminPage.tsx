@@ -14,6 +14,22 @@ import {
 } from '../services/api';
 import { buildPicksCsv, downloadCsv } from '../lib/csv';
 
+function getSyncStatusLabel(status: string) {
+  switch (status) {
+    case 'ok':
+      return 'Synced';
+    case 'warning':
+      return 'Warning';
+    case 'error':
+      return 'Error';
+    case 'syncing':
+      return 'Syncing';
+    case 'idle':
+    default:
+      return 'Idle';
+  }
+}
+
 export function AdminPage() {
   const { data, loading, error, reload } = useAppData();
   const [passcode, setPasscode] = useState('');
@@ -145,7 +161,7 @@ export function AdminPage() {
           <p className="muted">Use these tools to manage users, overrides, sync, and buy-backs.</p>
         </div>
         <div className="hero-meta">
-          <StatusBadge tone={data.settings.syncStatus === 'error' ? 'warning' : 'info'} label={`Sync: ${data.settings.syncStatus}`} />
+          <StatusBadge tone={data.settings.syncStatus === 'error' ? 'warning' : 'info'} label={`Sync: ${getSyncStatusLabel(data.settings.syncStatus)}`} />
           <button
             className="button button-secondary"
             onClick={() => {
@@ -163,7 +179,7 @@ export function AdminPage() {
       <div className="summary-grid">
         <div className="card summary-card">
           <p className="eyebrow">Sync Status</p>
-          <h3>{data.settings.syncStatus}</h3>
+          <h3>{getSyncStatusLabel(data.settings.syncStatus)}</h3>
           <p className="muted">{data.settings.syncMessage}</p>
         </div>
         <div className="card summary-card">
@@ -265,7 +281,7 @@ export function AdminPage() {
         >
           <p className="muted">Sync note: {data.settings.syncMessage}</p>
           <p className="muted">Missing today: {missingUsers.map((user) => user.displayName).join(', ') || 'None'}</p>
-          <p className="muted">Raw status: {data.settings.syncStatus}</p>
+          <p className="muted">Raw status: {getSyncStatusLabel(data.settings.syncStatus)}</p>
           <p className="muted">Last updated: {data.settings.lastUpdated}</p>
         </Panel>
       </div>

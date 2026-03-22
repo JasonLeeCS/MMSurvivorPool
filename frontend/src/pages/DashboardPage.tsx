@@ -4,6 +4,24 @@ import { StatusBadge } from '../components/StatusBadge';
 import { SummaryCard } from '../components/SummaryCard';
 import { useAppData } from '../hooks/useAppData';
 import { formatInTimeZone, getCountdownLabel } from '../lib/date';
+import type { Game } from '../types/domain';
+
+function getSlateStatus(game: Game) {
+  if (game.status === 'final') {
+    return 'Final';
+  }
+  if (game.status === 'live') {
+    return 'Pending';
+  }
+  return 'Scheduled';
+}
+
+function getSlateScore(game: Game) {
+  if (game.team1Score === undefined || game.team2Score === undefined) {
+    return null;
+  }
+  return `${game.team1Score}-${game.team2Score}`;
+}
 
 export function DashboardPage() {
   const { data, loading, error, reload } = useAppData();
@@ -117,8 +135,12 @@ export function DashboardPage() {
                     <p className="muted">{game.round}</p>
                   </div>
                   <div className="slate-meta">
-                    <span>{formatInTimeZone(game.tipoffTime, data.settings.timezone)}</span>
-                    <StatusBadge tone={game.status === 'final' ? 'locked' : 'info'} label={game.status} />
+                    <span>
+                      {game.status === 'scheduled'
+                        ? formatInTimeZone(game.tipoffTime, data.settings.timezone)
+                        : getSlateScore(game) || formatInTimeZone(game.tipoffTime, data.settings.timezone)}
+                    </span>
+                    <StatusBadge tone={game.status === 'final' ? 'locked' : 'info'} label={getSlateStatus(game)} />
                   </div>
                 </article>
               ))}

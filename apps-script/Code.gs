@@ -1,12 +1,37 @@
 function doGet(e) {
   try {
     var action = e && e.parameter && e.parameter.action ? e.parameter.action : 'snapshot';
-    if (action === 'snapshot') {
-      return jsonResponse_(buildSnapshot_());
+    var params = e && e.parameter ? e.parameter : {};
+
+    switch (action) {
+      case 'snapshot':
+        return jsonResponse_(buildSnapshot_(), params.callback);
+      case 'eligibleTeams':
+        return jsonResponse_(getEligibleTeamsForUser_(params.userId), params.callback);
+      case 'submitPick':
+        return jsonResponse_(submitPick_(params.userId, params.teamId), params.callback);
+      case 'validateAdminPasscode':
+        return jsonResponse_(validateAdminPasscode_(params.passcode), params.callback);
+      case 'upsertUser':
+        requireAdminToken_(params.adminToken);
+        return jsonResponse_(upsertUser_(params), params.callback);
+      case 'adminOverridePick':
+        requireAdminToken_(params.adminToken);
+        return jsonResponse_(adminOverridePick_(params), params.callback);
+      case 'recordBuyback':
+        requireAdminToken_(params.adminToken);
+        return jsonResponse_(recordBuyback_(params), params.callback);
+      case 'updateTeamStatus':
+        requireAdminToken_(params.adminToken);
+        return jsonResponse_(updateTeamStatus_(params), params.callback);
+      case 'refreshTeams':
+        requireAdminToken_(params.adminToken);
+        return jsonResponse_(refreshTeams_(), params.callback);
+      default:
+        return jsonError_('Unsupported GET action.', params.callback);
     }
-    return jsonError_('Unsupported GET action.');
   } catch (error) {
-    return jsonError_(error.message);
+    return jsonError_(error.message, e && e.parameter ? e.parameter.callback : '');
   }
 }
 
@@ -45,12 +70,20 @@ function doPost(e) {
   }
 }
 
-function jsonResponse_(data) {
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, data: data })).setMimeType(ContentService.MimeType.JSON);
+function jsonResponse_(data, callback) {
+  var payload = JSON.stringify({ ok: true, data: data });
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + payload + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(payload).setMimeType(ContentService.MimeType.JSON);
 }
 
-function jsonError_(message) {
-  return ContentService.createTextOutput(JSON.stringify({ ok: false, error: message })).setMimeType(ContentService.MimeType.JSON);
+function jsonError_(message, callback) {
+  var payload = JSON.stringify({ ok: false, error: message });
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + payload + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(payload).setMimeType(ContentService.MimeType.JSON);
 }
 
 function buildSnapshot_() {
@@ -136,13 +169,20 @@ function getTeams_() {
 }
 
 function getGames_() {
+  var timezone = getSettingsMap_().timezone || 'America/Chicago';
   return getRows_(TAB_NAMES.GAMES).map(function(row) {
+    var fallbackDate = normalizeSheetDate_(row.date);
+    var tipoffTime = sanitizeText_(row.tipoff_time);
+    var team1ScoreValue = sanitizeText_(row.team1_score);
+    var team2ScoreValue = sanitizeText_(row.team2_score);
     return {
       gameId: sanitizeText_(row.game_id),
-      date: sanitizeText_(row.date),
-      tipoffTime: sanitizeText_(row.tipoff_time),
+      date: derivePoolDateFromTipoff_(tipoffTime, timezone, fallbackDate),
+      tipoffTime: tipoffTime,
       team1: sanitizeText_(row.team1),
       team2: sanitizeText_(row.team2),
+      team1Score: team1ScoreValue ? Number(team1ScoreValue) : null,
+      team2Score: team2ScoreValue ? Number(team2ScoreValue) : null,
       winner: sanitizeText_(row.winner),
       round: sanitizeText_(row.round),
       status: sanitizeText_(row.status || 'scheduled'),
@@ -189,14 +229,21 @@ function getDayContext_(games) {
   }).sort(function(a, b) {
     return new Date(a.tipoffTime).getTime() - new Date(b.tipoffTime).getTime();
   });
-  var firstTip = todaysGames.length ? todaysGames[0].tipoffTime : '';
-  var locked = firstTip ? new Date().getTime() >= new Date(firstTip).getTime() : false;
+  var tippedOffGameExists = todaysGames.some(function(game) {
+    var status = String(game.status || '').toLowerCase();
+    return status === 'live' || status === 'final';
+  });
+  var timedGames = todaysGames.filter(function(game) {
+    return game.tipoffTime && !/T00:00:00(?:\.000)?Z$/.test(String(game.tipoffTime));
+  });
+  var firstTip = timedGames.length ? timedGames[0].tipoffTime : '';
+  var locked = tippedOffGameExists || (firstTip ? new Date().getTime() >= new Date(firstTip).getTime() : false);
   return {
     currentDate: currentDate,
     displayLabel: Utilities.formatDate(new Date(), timezone, 'EEE, MMM d'),
     lockTime: firstTip,
     picksLocked: locked,
-    firstTipDisplay: firstTip ? Utilities.formatDate(new Date(firstTip), timezone, 'MMM d h:mm a') : 'No games scheduled',
+    firstTipDisplay: firstTip ? Utilities.formatDate(new Date(firstTip), timezone, 'MMM d h:mm a') : (todaysGames.length ? 'Games in progress or completed' : 'No games scheduled'),
   };
 }
 
