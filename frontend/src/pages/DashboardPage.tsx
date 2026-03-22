@@ -26,13 +26,33 @@ function getSlateScore(game: Game) {
 export function DashboardPage() {
   const { data, loading, error, reload } = useAppData();
   const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useState<'name' | 'status' | 'buybacks'>('name');
 
   const filteredRows = useMemo(() => {
     if (!data) {
       return [];
     }
-    return data.userStatusRows.filter((row) => row.user.displayName.toLowerCase().includes(filter.toLowerCase()));
-  }, [data, filter]);
+    const rows = data.userStatusRows.filter((row) => row.user.displayName.toLowerCase().includes(filter.toLowerCase()));
+    return [...rows].sort((left, right) => {
+      if (sortKey === 'status') {
+        const leftRank = left.effectiveStatus === 'alive' ? 0 : 1;
+        const rightRank = right.effectiveStatus === 'alive' ? 0 : 1;
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        return left.user.displayName.localeCompare(right.user.displayName);
+      }
+
+      if (sortKey === 'buybacks') {
+        if (right.user.buybackCount !== left.user.buybackCount) {
+          return right.user.buybackCount - left.user.buybackCount;
+        }
+        return left.user.displayName.localeCompare(right.user.displayName);
+      }
+
+      return left.user.displayName.localeCompare(right.user.displayName);
+    });
+  }, [data, filter, sortKey]);
 
   if (loading) {
     return <div className="empty-state">Loading survivor pool dashboard...</div>;
@@ -85,6 +105,11 @@ export function DashboardPage() {
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
+            <select className="input input-compact" value={sortKey} onChange={(event) => setSortKey(event.target.value as 'name' | 'status' | 'buybacks')}>
+              <option value="name">Sort: Name</option>
+              <option value="status">Sort: Status</option>
+              <option value="buybacks">Sort: Buy-Backs</option>
+            </select>
           </div>
           <div className="responsive-table">
             <table>

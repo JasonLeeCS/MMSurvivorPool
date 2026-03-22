@@ -53,6 +53,7 @@ th, td { text-align: left; padding: 0.85rem 0.75rem; border-bottom: 1px solid va
 .button-secondary { background: rgba(148, 168, 201, 0.12); color: var(--text); border: 1px solid var(--line); }
 .button-small { padding: 0.5rem 0.75rem; }
 .input { width: 100%; padding: 0.85rem 0.95rem; border-radius: 12px; border: 1px solid var(--line); background: rgba(8, 15, 29, 0.92); color: var(--text); }
+.input-compact { width: auto; min-width: 170px; }
 .field { display: grid; gap: 0.45rem; }
 .notice { margin: 0; padding: 0.85rem 0.95rem; border-radius: 12px; background: rgba(67, 192, 169, 0.12); border: 1px solid rgba(67, 192, 169, 0.22); }
 .warning { background: rgba(238, 102, 119, 0.12); border-color: rgba(238, 102, 119, 0.22); }

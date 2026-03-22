@@ -194,7 +194,7 @@ function getPicks_() {
   return getRows_(TAB_NAMES.PICKS).map(function(row) {
     return {
       pickId: sanitizeText_(row.pick_id),
-      date: sanitizeText_(row.date),
+      date: normalizeSheetDate_(row.date),
       userId: sanitizeText_(row.user_id),
       teamId: sanitizeText_(row.team_id),
       teamName: sanitizeText_(row.team_name),
@@ -366,7 +366,7 @@ function upsertPickRow_(row) {
   var dateIndex = headers.indexOf('date');
   var userIndex = headers.indexOf('user_id');
   for (var i = 1; i < values.length; i += 1) {
-    if (String(values[i][dateIndex]) === row.date && String(values[i][userIndex]) === row.user_id) {
+    if (normalizeSheetDate_(values[i][dateIndex]) === row.date && String(values[i][userIndex]) === row.user_id) {
       var updated = headers.map(function(header) {
         return row[header] !== undefined ? row[header] : values[i][headers.indexOf(header)];
       });
